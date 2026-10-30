@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 아이콘: LCD 화면 + 키패드 (가운데 66dp 안전 영역 안에 그림) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 본체 -->
+    <path android:fillColor="#1D1D1F" android:pathData="M30,26h48a4,4 0,0 1,4 4v48a4,4 0,0 1,-4 4h-48a4,4 0,0 1,-4 -4v-48a4,4 0,0 1,4 -4z" />
+    <!-- LCD -->
+    <path android:fillColor="#000000" android:pathData="M32,31h44v19h-44z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M35,35h22v3h-22z" />
+    <path android:fillColor="#FF3B30" android:pathData="M35,41h16v3h-16z" />
+    <!-- 키패드 4x3 -->
+    <path android:fillColor="#E5E7EB"
+        android:pathData="M32,55h8v6h-8z M44,55h8v6h-8z M56,55h8v6h-8z
+                          M32,64h8v6h-8z M44,64h8v6h-8z M56,64h8v6h-8z
+                          M32,73h8v6h-8z M44,73h8v6h-8z M56,73h8v6h-8z" />
+    <path android:fillColor="#3B82F6"
+        android:pathData="M68,55h8v6h-8z M68,64h8v6h-8z M68,73h8v6h-8z" />
+</vector>
