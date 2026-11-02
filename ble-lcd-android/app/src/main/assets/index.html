@@ -167,7 +167,7 @@ header{display:flex;align-items:center;gap:10px}
   <h3>화면</h3>
   <div class="field"><label>LCD 가로 × 세로 (px)</label>
     <span><input type="number" id="sW" min="16" max="1024" style="width:70px"> × <input type="number" id="sH" min="16" max="1024" style="width:70px"></span></div>
-  <div class="field"><label>글꼴 번호별 글자 높이<small>0번부터 쉼표로 구분</small></label><input type="text" id="sFonts" style="width:150px"></div>
+  <div class="field"><label>글꼴별 글자 칸 (가로x세로)<small>0번 글꼴부터 쉼표로 구분 · 장치 글꼴과 같게</small></label><input type="text" id="sFonts" style="width:170px"></div>
   <div class="field"><label>표시 방식</label>
     <select id="sMode" style="width:170px;text-align:left">
       <option value="hd">고해상도 (매끄럽게)</option>
@@ -215,15 +215,15 @@ const KP_KEYS = ['1','2','3','A','4','5','6','B','7','8','9','C','*','0','#','D'
 const KP_FN = { A:{ text:'ESC' }, B:{ text:'UP', arw:'▲' }, C:{ text:'DOWN', arw:'▼' }, D:{ text:'ENTER' } };
 const KP_LABEL = k => KP_FN[k] ? KP_FN[k].text : k;
 
-const DEFAULTS = { w:128, h:64, fonts:'8,12,16,24,32', th:110, mode:'hd', family:'mono', weight:'500', fscale:100, reqMs:1000, reqOnConn:true, reconnect:true,
+const DEFAULTS = { w:128, h:64, cells:'6x8,10x16,12x16,16x24,24x32', th:110, mode:'hd', family:'mono', weight:'500', fscale:100, reqMs:1000, reqOnConn:true, reconnect:true,
   wake:true, vibe:true, auto:false, svcs:'', keys: KP_KEYS.map(k => k.charCodeAt(0)) };
-let S = structuredClone(DEFAULTS);
+let S = JSON.parse(JSON.stringify(DEFAULTS));
 try{
   const saved = JSON.parse(localStorage.getItem('ble-lcd-mobile') || 'null');
   if(saved) Object.assign(S, saved);
   else {  // 데스크톱 콘솔에서 쓰던 화면 설정·키 코드가 있으면 이어받음
     const d = JSON.parse(localStorage.getItem('ble-lcd-cfg3') || 'null');
-    if(d){ if(d.w) S.w = +d.w; if(d.h) S.h = +d.h; if(d.fonts) S.fonts = d.fonts; if(d.crispTh) S.th = +d.crispTh; }
+    if(d){ if(d.w) S.w = +d.w; if(d.h) S.h = +d.h; if(d.crispTh) S.th = +d.crispTh; }
     const k = JSON.parse(localStorage.getItem('ble-lcd-keypad16') || 'null');
     if(Array.isArray(k) && k.length === 16) S.keys = k;
   }
@@ -282,10 +282,19 @@ function redraw(){
   for(const p of replay) execPayload(p, 0, p.length);
 }
 function clearLcd(){ lctx.fillStyle = '#000'; lctx.fillRect(0, 0, S.w, S.h); }
-function fontPx(){
-  const list = String(S.fonts).split(/[,\s]+/).map(Number).filter(n => n > 0);
-  return list.length ? list[Math.min(st.font, list.length-1)] : 16;
+// 글꼴 번호별 글자 칸 "6x8,10x16,…" (숫자 하나만 쓰면 세로 크기로 보고 가로는 60%)
+function fontCell(){
+  const list = String(S.cells).split(/[,\s]+/).map(t => {
+    const m = t.match(/^(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)$/i);
+    if(m) return { w:+m[1], h:+m[2] };
+    const n = +t;
+    return n > 0 ? { w:Math.round(n * 0.6), h:n } : null;
+  }).filter(c => c && c.w > 0 && c.h > 0);
+  return list.length ? list[Math.min(st.font, list.length - 1)] : { w:8, h:16 };
 }
+// 한글 등 2바이트 글자는 2칸
+const cellSpan = ch => (ch.codePointAt(0) > 0x7F && ch !== '�') ? 2 : 1;
+const textCells = text => { let n = 0; for(const ch of text) n += cellSpan(ch); return n; };
 
 // ---- 고해상도 글자 ----
 const FAMILY = {
@@ -302,34 +311,53 @@ function capRatio(fam, weight){       // 글꼴의 대문자 높이 비율 (폰�
   const r = (m.actualBoundingBoxAscent || 72) / 100;
   return capCache[key] = Math.min(0.9, Math.max(0.5, r));
 }
-function drawTextHD(text, px){
+// 장치처럼 한 글자씩 고정 칸에 맞춰 그림 (칸보다 넓은 글자는 가로로 살짝 줄임)
+function cellText(ctx, text, x, y, cell, fam){
+  const k = Math.max(50, Math.min(200, +S.fscale || 100)) / 100;
+  const size = cell.h * 0.80 / capRatio(fam, S.weight) * k;      // 대문자 높이 ≈ 칸 높이의 80%
+  ctx.font = `${S.weight} ${size}px ${fam}`;
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'center';
+  let cx = x;
+  for(const ch of text){
+    const span = cellSpan(ch) * cell.w;
+    if(ch !== ' '){
+      const adv = ctx.measureText(ch).width || 1;
+      const sx = Math.min(1, span * 0.96 / adv);
+      ctx.save();
+      ctx.translate(cx + span / 2, y + cell.h * 0.875);
+      ctx.scale(sx, 1);
+      ctx.fillText(ch, 0, 0);
+      ctx.restore();
+    }
+    cx += span;
+  }
+  ctx.textAlign = 'left';
+  return cx - x;
+}
+function drawTextHD(text){
+  const cell = fontCell();
   const fam = FAMILY[S.family] || FAMILY.mono;
-  // 장치 글꼴 칸(px) 안에 꽉 차도록: 대문자 높이 ≈ 칸 높이의 78%
-  const size = px * 0.78 / capRatio(fam, S.weight) * (Math.max(50, Math.min(200, +S.fscale || 100)) / 100);
-  lctx.font = `${S.weight} ${size}px ${fam}`;
-  lctx.textBaseline = 'alphabetic';
-  const w = lctx.measureText(text).width;
-  lctx.fillStyle = '#000'; lctx.fillRect(st.x, st.y, w, px);       // 글자 배경 지우기
+  lctx.fillStyle = '#000'; lctx.fillRect(st.x, st.y, textCells(text) * cell.w, cell.h);   // 글자 배경 지우기
   lctx.fillStyle = colorCSS(st.color);
-  lctx.fillText(text, st.x, st.y + px * 0.86);
-  st.x += w;
+  st.x += cellText(lctx, text, st.x, st.y, cell, fam);
 }
 
 // ---- 도트 글자 (회색 없이 2단계) ----
 const scratch = document.createElement('canvas');
 const sctx = scratch.getContext('2d', { willReadFrequently:true });
-function drawTextDot(text, px){
-  const font = `${px}px "D2Coding","NanumGothicCoding",ui-monospace,Consolas,monospace`;
-  lctx.font = font;
-  const w = Math.ceil(lctx.measureText(text).width);
+function drawTextDot(text){
+  const cell = fontCell();
+  const w = Math.ceil(textCells(text) * cell.w), h = Math.ceil(cell.h);
   const x0 = Math.round(st.x), y0 = Math.round(st.y);
-  lctx.fillStyle = '#000'; lctx.fillRect(x0, y0, w, px);
-  const W = Math.max(1, w + 2), H = Math.max(1, Math.ceil(px * 1.25));
+  lctx.fillStyle = '#000'; lctx.fillRect(x0, y0, w, h);
+  const W = Math.max(1, w + 2), H = Math.max(1, Math.ceil(h * 1.3));
   if(scratch.width < W) scratch.width = W;
   if(scratch.height < H) scratch.height = H;
+  sctx.setTransform(1, 0, 0, 1, 0, 0);
   sctx.clearRect(0, 0, scratch.width, scratch.height);
-  sctx.font = font; sctx.textBaseline = 'top'; sctx.fillStyle = '#fff';
-  sctx.fillText(text, 0, 0);
+  sctx.fillStyle = '#fff';
+  cellText(sctx, text, 0, 0, cell, FAMILY.mono);
   const sx = Math.max(0, -x0), sy = Math.max(0, -y0), dx = x0 + sx, dy = y0 + sy;
   const cw = Math.min(W - sx, lcd.width - dx), ch = Math.min(H - sy, lcd.height - dy);
   if(cw > 0 && ch > 0){
@@ -342,7 +370,7 @@ function drawTextDot(text, px){
   }
   st.x += w;
 }
-function drawText(text){ const px = fontPx(); S.mode === 'dot' ? drawTextDot(text, px) : drawTextHD(text, px); }
+function drawText(text){ S.mode === 'dot' ? drawTextDot(text) : drawTextHD(text); }
 
 function line(x1, y1, x2, y2){
   if(S.mode !== 'dot'){
@@ -609,7 +637,7 @@ document.addEventListener('keydown', e => {
 
 // ================= 설정 시트 =================
 function openSheet(){
-  $('#sW').value = S.w; $('#sH').value = S.h; $('#sFonts').value = S.fonts; $('#sTh').value = S.th;
+  $('#sW').value = S.w; $('#sH').value = S.h; $('#sFonts').value = S.cells; $('#sTh').value = S.th;
   $('#sMode').value = S.mode; $('#sFamily').value = S.family; $('#sWeight').value = S.weight; $('#sFScale').value = S.fscale;
   $('#sReqMs').value = S.reqMs; $('#sReqOnConn').checked = S.reqOnConn; $('#sReconnect').checked = S.reconnect;
   $('#sWake').checked = S.wake; $('#sVibe').checked = S.vibe; $('#sSvcs').value = S.svcs;
@@ -621,7 +649,7 @@ function closeSheet(){
   const h = Math.max(16, Math.min(1024, parseInt($('#sH').value,10) || S.h));
   const sizeChanged = w !== S.w || h !== S.h;
   S.w = w; S.h = h;
-  S.fonts = $('#sFonts').value.trim() || DEFAULTS.fonts;
+  S.cells = $('#sFonts').value.trim() || DEFAULTS.cells;
   S.th = Math.max(1, Math.min(254, parseInt($('#sTh').value,10) || DEFAULTS.th));
   S.mode = $('#sMode').value; S.family = $('#sFamily').value; S.weight = $('#sWeight').value;
   S.fscale = Math.max(50, Math.min(200, parseInt($('#sFScale').value,10) || 100));
@@ -646,7 +674,7 @@ $('#btnClose').onclick = closeSheet;
 $('#scrim').onclick = closeSheet;
 $('#btnReset').onclick = () => {
   const auto = S.auto;
-  S = structuredClone(DEFAULTS); S.auto = auto;
+  S = JSON.parse(JSON.stringify(DEFAULTS)); S.auto = auto;
   openSheet(); toast('기본값을 불러왔어요. 완료를 누르면 저장돼요.');
 };
 

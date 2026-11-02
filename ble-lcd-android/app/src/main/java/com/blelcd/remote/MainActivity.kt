@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.location.LocationManager
 import android.os.Build
@@ -15,6 +16,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -24,6 +26,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewAssetLoader
 
 /**
@@ -52,9 +58,32 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Android 15 이상(API 35+)은 화면이 상태바·내비게이션바 뒤까지 꽉 차게 그려짐(edge-to-edge).
+        // 그래서 상태바·내비게이션바·키보드 높이만큼 안쪽 여백을 줘서 화면이 가려지지 않게 함.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES
+        val bg = Color.parseColor(if (night) "#0F1115" else "#F2F3F5")   // 웹 화면 배경색과 같게
+
         webView = WebView(this)
-        webView.setBackgroundColor(Color.parseColor("#0F1115"))
-        setContentView(webView)
+        webView.setBackgroundColor(bg)
+        val root = FrameLayout(this)
+        root.setBackgroundColor(bg)
+        root.addView(webView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        setContentView(root)
+
+        WindowInsetsControllerCompat(window, root).apply {
+            isAppearanceLightStatusBars = !night       // 밝은 배경이면 상태바 아이콘을 어둡게
+            isAppearanceLightNavigationBars = !night
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+            WindowInsetsCompat.CONSUMED
+        }
 
         ble = BleManager(this) { script ->
             runOnUiThread { if (!isDestroyed) webView.evaluateJavascript(script, null) }
