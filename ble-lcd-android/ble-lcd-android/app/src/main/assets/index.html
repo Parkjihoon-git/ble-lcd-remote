@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="mobile-web-app-capable" content="yes">
+<title>BLE LCD 리모컨</title>
+<style>
+/* 앱 안에서는 함께 넣은 폰트 파일을 사용 (인터넷 없이도 동작) */
+@font-face{font-family:"JBM Local";src:url("fonts/jetbrains-mono-500.woff2") format("woff2");font-weight:500;font-display:swap}
+@font-face{font-family:"JBM Local";src:url("fonts/jetbrains-mono-700.woff2") format("woff2");font-weight:700;font-display:swap}
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Noto+Sans+KR:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f2f3f5; --card:#ffffff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
+  --accent:#2563eb; --accent-text:#ffffff; --ok:#16a34a; --warn:#d97706; --err:#dc2626;
+  --sheet:#ffffff; --scrim:rgba(0,0,0,.45);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1115; --card:#181b22; --text:#e8eaed; --muted:#9aa3ae; --line:#2a2f38;
+    --accent:#3b82f6; --accent-text:#ffffff; --ok:#22c55e; --warn:#f59e0b; --err:#f87171;
+    --sheet:#181b22; --scrim:rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1115; --card:#181b22; --text:#e8eaed; --muted:#9aa3ae; --line:#2a2f38;
+  --accent:#3b82f6; --accent-text:#ffffff; --ok:#22c55e; --warn:#f59e0b; --err:#f87171;
+  --sheet:#181b22; --scrim:rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:15px/1.45 system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  -webkit-tap-highlight-color:transparent;touch-action:manipulation;-webkit-user-select:none;user-select:none}
+button{font:inherit;color:inherit;cursor:pointer}
+.app{max-width:480px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;gap:14px;
+  padding:calc(env(safe-area-inset-top) + 12px) 16px calc(env(safe-area-inset-bottom) + 20px)}
+
+/* 상단 바 */
+header{display:flex;align-items:center;gap:10px}
+.title{flex:1;min-width:0}
+.title h1{font-size:17px;margin:0;font-weight:700;letter-spacing:-.01em}
+.state{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);min-width:0}
+.state span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dot{width:8px;height:8px;border-radius:50%;background:#9ca3af;flex:0 0 8px}
+.dot.on{background:var(--ok)}
+.dot.busy{background:var(--warn);animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.3}}
+.btn{height:40px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:var(--card);
+  font-weight:600;font-size:14px;white-space:nowrap}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-text)}
+.btn.danger{color:var(--err)}
+.btn:disabled{opacity:.5}
+.icon-btn{width:40px;padding:0;display:grid;place-items:center}
+.icon-btn svg{width:20px;height:20px}
+
+/* LCD */
+.lcd-card{background:#0b0c0f;border-radius:20px;padding:14px;box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 6px 20px rgba(0,0,0,.18)}
+.lcd-wrap{display:flex;justify-content:center;align-items:center;overflow:hidden;border-radius:6px;background:#000}
+#lcd{display:block;flex:0 0 auto;image-rendering:pixelated;image-rendering:crisp-edges}
+.lcd-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:12px;color:#8b93a0;font-size:12px}
+.lcd-foot .info{display:flex;gap:12px;font-family:ui-monospace,Menlo,Consolas,monospace}
+.lcd-foot .err{color:#f59e0b}
+.pill{height:32px;padding:0 14px;border-radius:999px;border:1px solid #2c313a;background:#171a20;color:#e5e7eb;
+  font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px}
+.pill svg{width:15px;height:15px}
+.pill.on{border-color:#3b82f6;color:#93c5fd}
+.pill:active{background:#222833}
+
+/* 키패드 */
+.keypad{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:14px;border-radius:20px;
+  background:#1d1d1f;box-shadow:inset 0 0 0 1px #2e2e31}
+.key{height:64px;border-radius:12px;border:1px solid #000;background:linear-gradient(#2e2e30,#161618);color:#f5f5f5;
+  font:700 26px/1 system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  box-shadow:0 3px 0 #000,0 5px 10px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.07);
+  transition:transform .05s,box-shadow .05s,background .05s}
+.key.fn{font-size:13px;letter-spacing:.03em;background:linear-gradient(#2a3242,#161b26)}
+.key.fn .arw{font-size:16px;line-height:1}
+.key:active,.key.flash{transform:translateY(2px);box-shadow:0 1px 0 #000,inset 0 1px 0 rgba(255,255,255,.07);
+  background:linear-gradient(#3b82f6,#2563eb)}
+@media (max-height:700px){ .key{height:54px;font-size:22px} }
+
+.hint{font-size:12px;color:var(--muted);text-align:center;margin:0}
+
+/* 알림 토스트 */
+.toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 20px);transform:translate(-50%,20px);opacity:0;
+  max-width:calc(100% - 32px);padding:10px 16px;border-radius:12px;background:#111827;color:#f9fafb;font-size:13px;
+  box-shadow:0 8px 24px rgba(0,0,0,.3);transition:opacity .2s,transform .2s;pointer-events:none;z-index:30}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.toast.err{background:#7f1d1d}
+
+/* 설정 시트 */
+.scrim{position:fixed;inset:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity .2s;z-index:20}
+.scrim.open{opacity:1;pointer-events:auto}
+.sheet{position:fixed;left:0;right:0;bottom:0;max-width:480px;margin:0 auto;max-height:85vh;overflow:auto;
+  background:var(--sheet);border-radius:20px 20px 0 0;padding:8px 20px calc(env(safe-area-inset-bottom) + 20px);
+  transform:translateY(100%);transition:transform .25s ease;z-index:21;-webkit-user-select:text;user-select:text}
+.sheet.open{transform:none}
+.grab{width:40px;height:4px;border-radius:2px;background:var(--line);margin:4px auto 12px}
+.sheet h2{font-size:17px;margin:0 0 4px}
+.sheet h3{font-size:13px;color:var(--muted);font-weight:600;margin:18px 0 8px}
+.field{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.field label{font-size:14px}
+.field small{display:block;font-size:12px;color:var(--muted)}
+.field input[type=number],.field input[type=text],.field select{width:120px;height:36px;padding:0 10px;border:1px solid var(--line);
+  border-radius:10px;background:var(--bg);color:var(--text);font:14px ui-monospace,Menlo,Consolas,monospace;text-align:right}
+.field input[type=text].wide{width:100%;text-align:left}
+.switch{position:relative;width:46px;height:28px;flex:0 0 46px}
+.switch input{opacity:0;width:0;height:0}
+.switch span{position:absolute;inset:0;border-radius:999px;background:var(--line);transition:background .2s}
+.switch span::after{content:"";position:absolute;left:3px;top:3px;width:22px;height:22px;border-radius:50%;background:#fff;
+  transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.switch input:checked + span{background:var(--accent)}
+.switch input:checked + span::after{transform:translateX(18px)}
+.kgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.kgrid div{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12px;color:var(--muted)}
+.kgrid input{width:100%;height:34px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);
+  text-align:center;font:14px ui-monospace,Menlo,Consolas,monospace;text-transform:uppercase}
+.sheet .actions{display:flex;gap:10px;margin-top:20px}
+.sheet .actions .btn{flex:1}
+.notice{padding:12px 14px;border-radius:12px;border:1px solid var(--warn);color:var(--warn);font-size:13px;display:none}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="title">
+      <h1>BLE LCD 리모컨</h1>
+      <div class="state"><span class="dot" id="dot"></span><span id="stateText">연결 안 됨</span></div>
+    </div>
+    <button class="btn primary" id="btnConn">연결</button>
+    <button class="btn icon-btn" id="btnSettings" aria-label="설정">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </header>
+
+  <div class="notice" id="notice"></div>
+
+  <section class="lcd-card">
+    <div class="lcd-wrap" id="lcdWrap"><canvas id="lcd" width="128" height="64"></canvas></div>
+    <div class="lcd-foot">
+      <div class="info"><span id="fPkt">0 패킷</span><span id="fErr" class="err"></span></div>
+      <div style="display:flex;gap:8px">
+        <button class="pill" id="btnAuto" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>자동
+        </button>
+        <button class="pill" id="btnReq">화면 요청</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="keypad" id="keypad"></section>
+  <p class="hint" id="hint">연결 버튼을 눌러 장치를 선택하세요.</p>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet" role="dialog" aria-label="설정">
+  <div class="grab"></div>
+  <h2>설정</h2>
+
+  <h3>화면</h3>
+  <div class="field"><label>LCD 가로 × 세로 (px)</label>
+    <span><input type="number" id="sW" min="16" max="1024" style="width:70px"> × <input type="number" id="sH" min="16" max="1024" style="width:70px"></span></div>
+  <div class="field"><label>글꼴별 글자 칸 (가로x세로)<small>0번 글꼴부터 쉼표로 구분 · 장치 글꼴과 같게</small></label><input type="text" id="sFonts" style="width:170px"></div>
+  <div class="field"><label>표시 방식</label>
+    <select id="sMode" style="width:170px;text-align:left">
+      <option value="hd">고해상도 (매끄럽게)</option>
+      <option value="dot">도트 (실제 LCD처럼)</option>
+    </select></div>
+  <div class="field"><label>글꼴<small>고해상도 방식에서 사용</small></label>
+    <select id="sFamily" style="width:170px;text-align:left">
+      <option value="mono">고정폭 (JetBrains Mono)</option>
+      <option value="sans">고딕 (Noto Sans KR)</option>
+    </select></div>
+  <div class="field"><label>글자 굵기</label>
+    <select id="sWeight" style="width:170px;text-align:left">
+      <option value="500">보통</option>
+      <option value="700">굵게</option>
+    </select></div>
+  <div class="field"><label>글자 크기 배율 (%)<small>글자가 겹치면 줄이고, 작으면 키우세요</small></label><input type="number" id="sFScale" min="50" max="200" step="5"></div>
+  <div class="field"><label>도트 선명 기준<small>도트 방식에서 낮을수록 굵게 (1~254)</small></label><input type="number" id="sTh" min="1" max="254"></div>
+
+  <h3>동작</h3>
+  <div class="field"><label>자동 화면 요청 간격 (ms)</label><input type="number" id="sReqMs" min="100" step="100"></div>
+  <div class="field"><label>연결되면 화면 바로 요청</label><label class="switch"><input type="checkbox" id="sReqOnConn"><span></span></label></div>
+  <div class="field"><label>끊기면 자동 재연결</label><label class="switch"><input type="checkbox" id="sReconnect"><span></span></label></div>
+  <div class="field"><label>연결 중 화면 꺼짐 방지</label><label class="switch"><input type="checkbox" id="sWake"><span></span></label></div>
+  <div class="field"><label>키 누를 때 진동</label><label class="switch"><input type="checkbox" id="sVibe"><span></span></label></div>
+
+  <h3>키 코드 (HEX)</h3>
+  <div class="kgrid" id="kgrid"></div>
+
+  <h3 class="web-only">장치</h3>
+  <div class="field web-only" style="display:block"><label>추가 서비스 UUID<small>목록에 없는 장치일 때만 (쉼표로 구분)</small></label>
+    <input type="text" class="wide" id="sSvcs" placeholder="예: 0000fff0-0000-1000-8000-00805f9b34fb" style="margin-top:8px"></div>
+
+  <div class="actions">
+    <button class="btn" id="btnReset">기본값</button>
+    <button class="btn primary" id="btnClose">완료</button>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const h2 = b => b.toString(16).padStart(2,'0').toUpperCase();
+
+// ================= 설정 =================
+const KP_KEYS = ['1','2','3','A','4','5','6','B','7','8','9','C','*','0','#','D'];
+const KP_FN = { A:{ text:'ESC' }, B:{ text:'UP', arw:'▲' }, C:{ text:'DOWN', arw:'▼' }, D:{ text:'ENTER' } };
+const KP_LABEL = k => KP_FN[k] ? KP_FN[k].text : k;
+
+const DEFAULTS = { w:128, h:64, cells:'6x8,10x16,12x16,16x24,24x32', th:110, mode:'hd', family:'mono', weight:'500', fscale:100, reqMs:1000, reqOnConn:true, reconnect:true,
+  wake:true, vibe:true, auto:false, svcs:'', keys: KP_KEYS.map(k => k.charCodeAt(0)) };
+let S = structuredClone(DEFAULTS);
+try{
+  const saved = JSON.parse(localStorage.getItem('ble-lcd-mobile') || 'null');
+  if(saved) Object.assign(S, saved);
+  else {  // 데스크톱 콘솔에서 쓰던 화면 설정·키 코드가 있으면 이어받음
+    const d = JSON.parse(localStorage.getItem('ble-lcd-cfg3') || 'null');
+    if(d){ if(d.w) S.w = +d.w; if(d.h) S.h = +d.h; if(d.crispTh) S.th = +d.crispTh; }
+    const k = JSON.parse(localStorage.getItem('ble-lcd-keypad16') || 'null');
+    if(Array.isArray(k) && k.length === 16) S.keys = k;
+  }
+}catch(e){}
+if(!Array.isArray(S.keys) || S.keys.length !== 16) S.keys = [...DEFAULTS.keys];
+const save = () => { try{ localStorage.setItem('ble-lcd-mobile', JSON.stringify(S)); }catch(e){} };
+
+// ================= 알림 =================
+let toastTimer;
+function toast(msg, isErr = false){
+  const t = $('#toast');
+  t.textContent = msg; t.className = 'toast show' + (isErr ? ' err' : '');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = 'toast' + (isErr ? ' err' : ''), 2400);
+}
+
+// ================= LCD =================
+// hd : 장치 좌표만 배율만큼 확대하고, 글자·선은 휴대폰 해상도로 매끄럽게 그림
+// dot: LCD 픽셀을 정수 배율로 키워 실제 LCD처럼 보여줌
+const lcd = $('#lcd');
+const lctx = lcd.getContext('2d', { willReadFrequently:true });
+const st = { x:0, y:0, font:1, color:1 };
+const COLORS = { 0:[255,0,0], 1:[255,255,255] };        // 장치 규격: 0=RED, 1=WHITE
+const colorRGB = v => COLORS[v] || COLORS[1];
+const colorCSS = v => `rgb(${colorRGB(v).join(',')})`;
+let scale = 1;                                          // 캔버스 픽셀 / LCD 픽셀
+
+// 화면을 다시 그릴 수 있도록, 마지막 "화면 지우기" 이후 받은 명령을 보관
+let replay = [], replayStart = { ...st };
+
+function initLcd(){ replay = []; replayStart = { ...st }; fitLcd(); }
+function fitLcd(){
+  const dpr = window.devicePixelRatio || 1;
+  const availW = $('#lcdWrap').clientWidth * dpr;
+  const availH = Math.max(120, window.innerHeight * 0.38) * dpr;
+  let cw, ch;
+  if(S.mode === 'dot'){
+    const k = Math.max(1, Math.floor(Math.min(availW / S.w, availH / S.h)));
+    cw = S.w; ch = S.h; scale = 1;
+    lcd.style.width = (S.w * k / dpr) + 'px'; lcd.style.height = (S.h * k / dpr) + 'px';
+    lcd.style.imageRendering = 'pixelated';
+  } else {
+    const s = Math.min(availW / S.w, availH / S.h);
+    cw = Math.max(1, Math.round(S.w * s)); ch = Math.max(1, Math.round(S.h * s)); scale = cw / S.w;
+    lcd.style.width = (cw / dpr) + 'px'; lcd.style.height = (ch / dpr) + 'px';
+    lcd.style.imageRendering = 'auto';
+  }
+  if(lcd.width !== cw) lcd.width = cw;
+  if(lcd.height !== ch) lcd.height = ch;
+  redraw();
+}
+function redraw(){
+  Object.assign(st, replayStart);
+  lctx.setTransform(scale, 0, 0, scale, 0, 0);
+  lctx.imageSmoothingEnabled = S.mode !== 'dot';
+  clearLcd();
+  for(const p of replay) execPayload(p, 0, p.length);
+}
+function clearLcd(){ lctx.fillStyle = '#000'; lctx.fillRect(0, 0, S.w, S.h); }
+// 글꼴 번호별 글자 칸 "6x8,10x16,…" (숫자 하나만 쓰면 세로 크기로 보고 가로는 60%)
+function fontCell(){
+  const list = String(S.cells).split(/[,\s]+/).map(t => {
+    const m = t.match(/^(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)$/i);
+    if(m) return { w:+m[1], h:+m[2] };
+    const n = +t;
+    return n > 0 ? { w:Math.round(n * 0.6), h:n } : null;
+  }).filter(c => c && c.w > 0 && c.h > 0);
+  return list.length ? list[Math.min(st.font, list.length - 1)] : { w:8, h:16 };
+}
+// 한글 등 2바이트 글자는 2칸
+const cellSpan = ch => (ch.codePointAt(0) > 0x7F && ch !== '�') ? 2 : 1;
+const textCells = text => { let n = 0; for(const ch of text) n += cellSpan(ch); return n; };
+
+// ---- 고해상도 글자 ----
+const FAMILY = {
+  mono: '"JBM Local","JetBrains Mono","D2Coding",ui-monospace,Consolas,monospace',
+  sans: '"Noto Sans KR","Noto Sans CJK KR","Malgun Gothic",system-ui,sans-serif',
+};
+const capCache = {};
+function capRatio(fam, weight){       // 글꼴의 대문자 높이 비율 (폰트 크기 대비)
+  const key = fam + weight;
+  if(capCache[key]) return capCache[key];
+  const c = document.createElement('canvas').getContext('2d');
+  c.font = `${weight} 100px ${fam}`;
+  const m = c.measureText('H0');
+  const r = (m.actualBoundingBoxAscent || 72) / 100;
+  return capCache[key] = Math.min(0.9, Math.max(0.5, r));
+}
+// 장치처럼 한 글자씩 고정 칸에 맞춰 그림 (칸보다 넓은 글자는 가로로 살짝 줄임)
+function cellText(ctx, text, x, y, cell, fam){
+  const k = Math.max(50, Math.min(200, +S.fscale || 100)) / 100;
+  const size = cell.h * 0.80 / capRatio(fam, S.weight) * k;      // 대문자 높이 ≈ 칸 높이의 80%
+  ctx.font = `${S.weight} ${size}px ${fam}`;
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'center';
+  let cx = x;
+  for(const ch of text){
+    const span = cellSpan(ch) * cell.w;
+    if(ch !== ' '){
+      const adv = ctx.measureText(ch).width || 1;
+      const sx = Math.min(1, span * 0.96 / adv);
+      ctx.save();
+      ctx.translate(cx + span / 2, y + cell.h * 0.875);
+      ctx.scale(sx, 1);
+      ctx.fillText(ch, 0, 0);
+      ctx.restore();
+    }
+    cx += span;
+  }
+  ctx.textAlign = 'left';
+  return cx - x;
+}
+function drawTextHD(text){
+  const cell = fontCell();
+  const fam = FAMILY[S.family] || FAMILY.mono;
+  lctx.fillStyle = '#000'; lctx.fillRect(st.x, st.y, textCells(text) * cell.w, cell.h);   // 글자 배경 지우기
+  lctx.fillStyle = colorCSS(st.color);
+  st.x += cellText(lctx, text, st.x, st.y, cell, fam);
+}
+
+// ---- 도트 글자 (회색 없이 2단계) ----
+const scratch = document.createElement('canvas');
+const sctx = scratch.getContext('2d', { willReadFrequently:true });
+function drawTextDot(text){
+  const cell = fontCell();
+  const w = Math.ceil(textCells(text) * cell.w), h = Math.ceil(cell.h);
+  const x0 = Math.round(st.x), y0 = Math.round(st.y);
+  lctx.fillStyle = '#000'; lctx.fillRect(x0, y0, w, h);
+  const W = Math.max(1, w + 2), H = Math.max(1, Math.ceil(h * 1.3));
+  if(scratch.width < W) scratch.width = W;
+  if(scratch.height < H) scratch.height = H;
+  sctx.setTransform(1, 0, 0, 1, 0, 0);
+  sctx.clearRect(0, 0, scratch.width, scratch.height);
+  sctx.fillStyle = '#fff';
+  cellText(sctx, text, 0, 0, cell, FAMILY.mono);
+  const sx = Math.max(0, -x0), sy = Math.max(0, -y0), dx = x0 + sx, dy = y0 + sy;
+  const cw = Math.min(W - sx, lcd.width - dx), ch = Math.min(H - sy, lcd.height - dy);
+  if(cw > 0 && ch > 0){
+    const src = sctx.getImageData(sx, sy, cw, ch).data;
+    const img = lctx.getImageData(dx, dy, cw, ch), d = img.data;
+    const [r,g,b] = colorRGB(st.color);
+    const th = Math.max(1, Math.min(254, +S.th || 110));
+    for(let i = 0; i < src.length; i += 4) if(src[i+3] >= th){ d[i]=r; d[i+1]=g; d[i+2]=b; d[i+3]=255; }
+    lctx.putImageData(img, dx, dy);
+  }
+  st.x += w;
+}
+function drawText(text){ S.mode === 'dot' ? drawTextDot(text) : drawTextHD(text); }
+
+function line(x1, y1, x2, y2){
+  if(S.mode !== 'dot'){
+    lctx.strokeStyle = colorCSS(st.color); lctx.lineWidth = 1; lctx.lineCap = 'square';
+    lctx.beginPath(); lctx.moveTo(x1 + .5, y1 + .5); lctx.lineTo(x2 + .5, y2 + .5); lctx.stroke();
+    return;
+  }
+  lctx.fillStyle = colorCSS(st.color);
+  let dx = Math.abs(x2-x1), dy = -Math.abs(y2-y1), err = dx + dy;
+  const sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1;
+  for(let n = 0; n < 4096; n++){
+    lctx.fillRect(x1, y1, 1, 1);
+    if(x1 === x2 && y1 === y2) break;
+    const e2 = 2 * err;
+    if(e2 >= dy){ err += dy; x1 += sx; }
+    if(e2 <= dx){ err += dx; y1 += sy; }
+  }
+}
+function rect(x1, y1, x2, y2){
+  const x = Math.min(x1,x2), y = Math.min(y1,y2), w = Math.abs(x2-x1), h = Math.abs(y2-y1);
+  if(S.mode !== 'dot'){ lctx.strokeStyle = colorCSS(st.color); lctx.lineWidth = 1; lctx.strokeRect(x + .5, y + .5, w, h); return; }
+  lctx.fillStyle = colorCSS(st.color);
+  lctx.fillRect(x, y, w+1, 1); lctx.fillRect(x, y+h, w+1, 1);
+  lctx.fillRect(x, y, 1, h+1); lctx.fillRect(x+w, y, 1, h+1);
+}
+
+// ================= 프로토콜 =================
+// 13 02 cnt cmd[data]… crc 03  ·  cnt = cmd~data 바이트 수  ·  crc = CRC-8(0x07), cnt부터 cnt바이트
+const CRC8 = (() => { const t = new Uint8Array(256);
+  for(let i = 0; i < 256; i++){ let c = i; for(let b = 0; b < 8; b++) c = (c & 0x80) ? ((c << 1) ^ 0x07) & 0xff : (c << 1) & 0xff; t[i] = c; }
+  return t; })();
+function crcOf(a, from, len){ let c = 0; for(let i = from; i < from + len; i++) c = CRC8[c ^ a[i]]; return c; }
+
+function buildPacket(payload){
+  const f = [0x13, 0x02, payload.length & 0xff, ...payload];
+  f.push(crcOf(f, 2, f[2]));
+  f.push(0x03);
+  return new Uint8Array(f);
+}
+
+const strDec = new TextDecoder('euc-kr');
+// 반환: { ok, cleared }
+function execPayload(a, start, end){
+  let i = start, cleared = false;
+  while(i < end){
+    const c = a[i++];
+    switch(c){
+      case 0x20: st.x = a[i]; st.y = a[i+1]; i += 2; break;
+      case 0x21: st.x = (a[i]<<8)|a[i+1]; st.y = (a[i+2]<<8)|a[i+3]; i += 4; break;
+      case 0x22: st.font = a[i++]; break;
+      case 0x23: st.color = a[i++]; break;
+      case 0x24: { let e = i; while(e < end && a[e] !== 0) e++; drawText(strDec.decode(new Uint8Array(a.slice(i, e)))); i = e + 1; break; }
+      case 0x25: clearLcd(); cleared = true; break;
+      case 0x26: line(a[i], a[i+1], a[i+2], a[i+3]); i += 4; break;
+      case 0x27: rect(a[i], a[i+1], a[i+2], a[i+3]); i += 4; break;
+      case 0x30: break;
+      case 0x31: i += 1; break;
+      default: return { ok:false, cleared };   // 모르는 명령: 이 패킷의 나머지는 건너뜀
+    }
+  }
+  return { ok:true, cleared };
+}
+
+let rxQ = [], lastRx = 0;
+const stats = { pkt:0, err:0 };
+function feed(bytes){
+  const now = Date.now();
+  if(rxQ.length && now - lastRx > 1500) rxQ = [];
+  lastRx = now;
+  for(const b of bytes) rxQ.push(b);
+  for(let guard = 0; guard < 200; guard++){
+    let h = -1;
+    for(let i = 0; i < rxQ.length - 1; i++) if(rxQ[i] === 0x13 && rxQ[i+1] === 0x02){ h = i; break; }
+    if(h < 0){ rxQ = rxQ[rxQ.length-1] === 0x13 ? [0x13] : []; break; }
+    if(h > 0) rxQ.splice(0, h);
+    if(rxQ.length < 3) break;
+    const cnt = rxQ[2], total = 3 + cnt + 2;
+    if(rxQ.length < total) break;
+    if(rxQ[total-1] !== 0x03){ stats.err++; rxQ.splice(0, 2); continue; }
+    const frame = rxQ.splice(0, total);
+    if(crcOf(frame, 2, cnt) !== frame[3 + cnt]) stats.err++;
+    const payload = frame.slice(3, 3 + cnt);
+    const before = { ...st };
+    const r = execPayload(payload, 0, payload.length);
+    if(!r.ok) stats.err++;
+    // 다시 그리기용 기록: 화면을 지운 패킷부터 새로 보관
+    if(r.cleared){ replay = [payload]; replayStart = before; }
+    else { replay.push(payload); if(replay.length > 2000) replay.shift(); }
+    stats.pkt++;
+  }
+  $('#fPkt').textContent = `${stats.pkt} 패킷`;
+  $('#fErr').textContent = stats.err ? `오류 ${stats.err}` : '';
+}
+
+// ================= BLE =================
+const DEFAULT_SERVICES = [
+  '0000ffe0-0000-1000-8000-00805f9b34fb',   // HM-10 / JDY 계열
+  '6e400001-b5a3-f393-e0a9-e50e24dcca9e',   // Nordic UART
+  '4fafc201-1fb5-459e-8fcc-c5c9c331914b',   // ESP32 예제
+  '0000fff0-0000-1000-8000-00805f9b34fb',
+];
+const PREFERRED_WRITE = ['0000ffe1-0000-1000-8000-00805f9b34fb','6e400002-b5a3-f393-e0a9-e50e24dcca9e'];
+let device = null, writeChar = null, manual = false, wakeLock = null;
+// 안드로이드 앱 안에서는 네이티브 블루투스(AndroidBle)를, 브라우저에서는 Web Bluetooth를 사용
+const NATIVE = window.AndroidBle || null;
+let nativeConnected = false;
+const connected = () => NATIVE ? nativeConnected : !!device?.gatt?.connected;
+
+function setState(state, text){
+  $('#dot').className = 'dot' + (state === 'on' ? ' on' : state === 'busy' ? ' busy' : '');
+  $('#stateText').textContent = text;
+  const b = $('#btnConn');
+  b.disabled = state === 'busy';
+  if(state === 'on'){ b.textContent = '해제'; b.className = 'btn danger'; }
+  else { b.textContent = '연결'; b.className = 'btn primary'; }
+  $('#hint').style.display = state === 'on' ? 'none' : '';
+}
+
+function parseUuid(s){
+  s = s.trim(); if(!s) return null;
+  if(/^(0x)?[0-9a-f]{4}$/i.test(s)) return parseInt(s.replace(/^0x/i,''),16);
+  return s.toLowerCase();
+}
+
+async function connect(){
+  if(NATIVE){ NATIVE.setAutoReconnect(!!S.reconnect); NATIVE.connect(); return; }
+  if(!('bluetooth' in navigator)){ toast('이 브라우저는 블루투스를 지원하지 않아요', true); return; }
+  const extra = S.svcs.split(',').map(parseUuid).filter(Boolean);
+  try{
+    setState('busy', '장치 선택 중…');
+    device = await navigator.bluetooth.requestDevice({ acceptAllDevices:true, optionalServices:[...new Set([...DEFAULT_SERVICES, ...extra])] });
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    await openGatt();
+  }catch(e){
+    if(e.name !== 'NotFoundError') toast(e.message, true);
+    setState(connected() ? 'on' : 'off', connected() ? device.name || '연결됨' : '연결 안 됨');
+  }
+}
+
+async function openGatt(){
+  setState('busy', `${device.name || '장치'} 연결 중…`);
+  const server = await device.gatt.connect();
+  manual = false; rxQ = []; writeChar = null;
+  let services = [];
+  try{ services = await server.getPrimaryServices(); }catch(e){}
+  let notifyCount = 0, firstWrite = null;
+  for(const s of services){
+    let list = [];
+    try{ list = await s.getCharacteristics(); }catch(e){}
+    for(const c of list){
+      const p = c.properties;
+      if((p.write || p.writeWithoutResponse) && !firstWrite) firstWrite = c;
+      if((p.write || p.writeWithoutResponse) && PREFERRED_WRITE.includes(c.uuid)) writeChar = c;
+      if(p.notify || p.indicate){
+        try{
+          c.removeEventListener('characteristicvaluechanged', onValue);
+          c.addEventListener('characteristicvaluechanged', onValue);
+          await c.startNotifications(); notifyCount++;
+        }catch(e){}
+      }
+    }
+  }
+  writeChar = writeChar || firstWrite;
+  setState('on', device.name || '연결됨');
+  if(!notifyCount) toast('데이터를 받을 수 있는 항목이 없어요. 설정에서 서비스 UUID를 추가해 보세요.', true);
+  else if(!writeChar) toast('키를 보낼 수 있는 항목이 없어요', true);
+  else toast('연결됐어요');
+  keepAwake();
+  if(S.reqOnConn && writeChar) requestScreen();
+  updateAuto();
+}
+
+function onDisconnected(){
+  setState('off', '연결 끊김');
+  writeChar = null; releaseWake(); updateAuto();
+  if(!manual && S.reconnect && device) reconnect(1);
+}
+function reconnect(n){
+  if(n > 6){ toast('다시 연결하지 못했어요', true); setState('off','연결 안 됨'); return; }
+  setState('busy', `다시 연결 중… (${n})`);
+  setTimeout(async () => {
+    try{ await openGatt(); }catch(e){ reconnect(n + 1); }
+  }, Math.min(1000 * 2 ** (n-1), 8000));
+}
+function disconnect(){
+  if(NATIVE){ NATIVE.disconnect(); return; }
+  manual = true; if(connected()) device.gatt.disconnect(); setState('off','연결 안 됨');
+}
+
+const onValue = e => { const v = e.target.value; feed(new Uint8Array(v.buffer, v.byteOffset, v.byteLength)); };
+
+let writing = Promise.resolve();
+const toHexStr = bytes => Array.from(bytes, h2).join('');
+function send(bytes){
+  if(NATIVE){
+    if(!nativeConnected){ toast('먼저 장치를 연결하세요', true); return Promise.resolve(false); }
+    const ok = NATIVE.write(toHexStr(bytes));   // 앱이 20바이트씩 나눠서 순서대로 보냄
+    if(!ok) toast('전송 실패', true);
+    return Promise.resolve(ok);
+  }
+  if(!writeChar || !connected()){ toast('먼저 장치를 연결하세요', true); return Promise.resolve(false); }
+  const c = writeChar, noResp = c.properties.writeWithoutResponse && !c.properties.write;
+  writing = writing.then(async () => {
+    try{
+      for(let i = 0; i < bytes.length; i += 20){
+        const chunk = bytes.slice(i, i + 20);
+        if(noResp) await c.writeValueWithoutResponse(chunk); else await c.writeValueWithResponse(chunk);
+      }
+      return true;
+    }catch(e){ toast('전송 실패: ' + e.message, true); return false; }
+  });
+  return writing;
+}
+const requestScreen = () => send(buildPacket([0x30]));
+
+// 자동 화면 요청
+let autoTimer = null, autoBusy = false;
+function updateAuto(){
+  clearInterval(autoTimer); autoTimer = null;
+  $('#btnAuto').classList.toggle('on', S.auto);
+  $('#btnAuto').setAttribute('aria-pressed', S.auto);
+  if(!S.auto || !connected()) return;
+  autoTimer = setInterval(async () => {
+    if(autoBusy || !connected()) return;
+    autoBusy = true; await requestScreen(); autoBusy = false;
+  }, Math.max(100, +S.reqMs || 1000));
+}
+
+// 화면 꺼짐 방지
+async function keepAwake(){
+  if(NATIVE){ NATIVE.setKeepScreenOn(!!S.wake); return; }
+  if(!S.wake || !('wakeLock' in navigator) || wakeLock) return;
+  try{ wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => wakeLock = null); }catch(e){}
+}
+function releaseWake(){
+  if(NATIVE){ NATIVE.setKeepScreenOn(false); return; }
+  try{ wakeLock?.release(); }catch(e){} wakeLock = null;
+}
+document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible' && connected()) keepAwake(); });
+
+// ================= 키패드 =================
+function renderKeypad(){
+  $('#keypad').innerHTML = KP_KEYS.map((k, i) => {
+    const f = KP_FN[k];
+    const face = f ? (f.arw ? `<span class="arw">${f.arw}</span>${f.text}` : f.text) : k;
+    return `<button class="key${f ? ' fn' : ''}" data-i="${i}" aria-label="${KP_LABEL(k)}">${face}</button>`;
+  }).join('');
+}
+function pressKey(i){
+  const b = $(`#keypad [data-i="${i}"]`);
+  if(b){ b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 110); }
+  if(S.vibe){ if(NATIVE) NATIVE.vibrate(12); else if(navigator.vibrate) navigator.vibrate(12); }
+  send(buildPacket([0x31, S.keys[i] & 0xff]));
+}
+$('#keypad').addEventListener('click', e => { const b = e.target.closest('[data-i]'); if(b) pressKey(+b.dataset.i); });
+// 블루투스 키보드·PC에서도 사용
+document.addEventListener('keydown', e => {
+  if($('#sheet').classList.contains('open') || e.ctrlKey || e.metaKey || e.altKey) return;
+  const map = { Escape:'A', ArrowUp:'B', ArrowDown:'C', Enter:'D' };
+  const k = map[e.key] || (e.key.length === 1 ? e.key.toUpperCase() : null);
+  const i = k ? KP_KEYS.indexOf(k) : -1;
+  if(i >= 0){ e.preventDefault(); pressKey(i); }
+});
+
+// ================= 설정 시트 =================
+function openSheet(){
+  $('#sW').value = S.w; $('#sH').value = S.h; $('#sFonts').value = S.cells; $('#sTh').value = S.th;
+  $('#sMode').value = S.mode; $('#sFamily').value = S.family; $('#sWeight').value = S.weight; $('#sFScale').value = S.fscale;
+  $('#sReqMs').value = S.reqMs; $('#sReqOnConn').checked = S.reqOnConn; $('#sReconnect').checked = S.reconnect;
+  $('#sWake').checked = S.wake; $('#sVibe').checked = S.vibe; $('#sSvcs').value = S.svcs;
+  $('#kgrid').innerHTML = KP_KEYS.map((k, i) => `<div>${KP_LABEL(k)}<input data-k="${i}" maxlength="2" value="${h2(S.keys[i])}"></div>`).join('');
+  $('#scrim').classList.add('open'); $('#sheet').classList.add('open');
+}
+function closeSheet(){
+  const w = Math.max(16, Math.min(1024, parseInt($('#sW').value,10) || S.w));
+  const h = Math.max(16, Math.min(1024, parseInt($('#sH').value,10) || S.h));
+  const sizeChanged = w !== S.w || h !== S.h;
+  S.w = w; S.h = h;
+  S.cells = $('#sFonts').value.trim() || DEFAULTS.cells;
+  S.th = Math.max(1, Math.min(254, parseInt($('#sTh').value,10) || DEFAULTS.th));
+  S.mode = $('#sMode').value; S.family = $('#sFamily').value; S.weight = $('#sWeight').value;
+  S.fscale = Math.max(50, Math.min(200, parseInt($('#sFScale').value,10) || 100));
+  S.reqMs = Math.max(100, parseInt($('#sReqMs').value,10) || DEFAULTS.reqMs);
+  S.reqOnConn = $('#sReqOnConn').checked; S.reconnect = $('#sReconnect').checked;
+  S.wake = $('#sWake').checked; S.vibe = $('#sVibe').checked; S.svcs = $('#sSvcs').value.trim();
+  let bad = false;
+  document.querySelectorAll('#kgrid input').forEach(inp => {
+    const v = inp.value.trim().replace(/^0x/i,'');
+    if(/^[0-9a-f]{1,2}$/i.test(v)) S.keys[+inp.dataset.k] = parseInt(v,16); else bad = true;
+  });
+  save();
+  if(sizeChanged) initLcd(); else fitLcd();   // 표시 방식·글꼴이 바뀌어도 받은 화면을 다시 그림
+  if(S.wake && connected()) keepAwake(); else if(!S.wake) releaseWake();
+  if(NATIVE) NATIVE.setAutoReconnect(!!S.reconnect);
+  updateAuto();
+  $('#scrim').classList.remove('open'); $('#sheet').classList.remove('open');
+  if(bad) toast('HEX가 아닌 키 코드는 바꾸지 않았어요', true);
+}
+$('#btnSettings').onclick = openSheet;
+$('#btnClose').onclick = closeSheet;
+$('#scrim').onclick = closeSheet;
+$('#btnReset').onclick = () => {
+  const auto = S.auto;
+  S = structuredClone(DEFAULTS); S.auto = auto;
+  openSheet(); toast('기본값을 불러왔어요. 완료를 누르면 저장돼요.');
+};
+
+// ================= 시작 =================
+$('#btnConn').onclick = () => connected() ? disconnect() : connect();
+$('#btnReq').onclick = requestScreen;
+$('#btnAuto').onclick = () => { S.auto = !S.auto; save(); updateAuto(); toast(S.auto ? `${S.reqMs}ms마다 화면을 요청해요` : '자동 요청을 껐어요'); };
+window.addEventListener('resize', fitLcd);
+
+// ---------- 안드로이드 앱에서 오는 알림 ----------
+if(NATIVE){
+  document.querySelectorAll('.web-only').forEach(el => el.style.display = 'none');
+  window.bleOnState = (state, name, msg) => {
+    switch(state){
+      case 'scanning':     setState('busy', '장치 찾는 중…'); break;
+      case 'connecting':   setState('busy', `${name || '장치'} 연결 중…`); break;
+      case 'reconnecting': nativeConnected = false; setState('busy', msg || '다시 연결 중…'); updateAuto(); break;
+      case 'connected':    nativeConnected = true; rxQ = []; setState('on', name || '연결됨'); break;
+      case 'disconnected': nativeConnected = false; setState('off', msg || '연결 안 됨'); updateAuto(); releaseWake(); break;
+      case 'cancelled':    if(!nativeConnected) setState('off', '연결 안 됨'); break;
+      case 'error':        toast(msg, true); if(!nativeConnected) setState('off', '연결 안 됨'); break;
+    }
+  };
+  window.bleOnReady = (hasNotify, hasWrite) => {
+    if(!hasNotify) toast('데이터를 받을 수 있는 항목이 없어요', true);
+    else if(!hasWrite) toast('키를 보낼 수 있는 항목이 없어요', true);
+    else toast('연결됐어요');
+    keepAwake();
+    if(S.reqOnConn && hasWrite) requestScreen();
+    updateAuto();
+  };
+  window.bleOnData = hex => {
+    const b = new Uint8Array(hex.length >> 1);
+    for(let i = 0; i < b.length; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16);
+    feed(b);
+  };
+  NATIVE.setAutoReconnect(!!S.reconnect);
+}
+
+(function checkSupport(){
+  const n = $('#notice');
+  if(NATIVE) return;
+  if(!('bluetooth' in navigator)){
+    n.style.display = 'block';
+    n.textContent = '이 브라우저는 블루투스를 지원하지 않아요. 안드로이드 Chrome에서 열어주세요. (iPhone Safari는 지원하지 않아요)';
+  } else if(!window.isSecureContext){
+    n.style.display = 'block';
+    n.textContent = '블루투스는 https:// 주소나 기기에 저장한 파일로 열었을 때만 동작해요.';
+  }
+})();
+
+renderKeypad();
+initLcd();
+if(document.fonts?.ready) document.fonts.ready.then(() => { for(const k in capCache) delete capCache[k]; redraw(); });
+updateAuto();
+</script>
+</body>
+</html>
