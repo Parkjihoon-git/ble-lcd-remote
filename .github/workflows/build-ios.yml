@@ -1,0 +1,64 @@
+name: Build iOS IPA
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find iOS project
+        id: proj
+        run: |
+          # ios/project.yml 위치를 찾음 (저장소 맨 위든 폴더 안이든)
+          YML=$(find . -path '*/ios/project.yml' -not -path './.git/*' | head -1)
+          if [ -z "$YML" ]; then
+            echo "::error::ios/project.yml 이 없어요. ios 폴더를 저장소에 올려주세요."
+            exit 1
+          fi
+          echo "dir=$(dirname "$YML")" >> "$GITHUB_OUTPUT"
+          echo "iOS 프로젝트 위치: $(dirname "$YML")"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: xcodegen generate
+
+      - name: Build app (unsigned)
+        working-directory: ${{ steps.proj.outputs.dir }}
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild -version
+          xcodebuild \
+            -project BleLcdRemote.xcodeproj \
+            -target BleLcdRemote \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$PWD/build" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log | grep -E "error:|warning: |BUILD (SUCCEEDED|FAILED)" | tail -60
+          test -d build/Release-iphoneos/BleLcdRemote.app
+
+      - name: Package IPA
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: |
+          rm -rf Payload && mkdir Payload
+          cp -R build/Release-iphoneos/BleLcdRemote.app Payload/
+          # 화면 파일이 앱 안에 들어갔는지 확인
+          test -f Payload/BleLcdRemote.app/assets/index.html
+          zip -qry "$GITHUB_WORKSPACE/BLE-LCD-Remote-unsigned.ipa" Payload
+          ls -la "$GITHUB_WORKSPACE/BLE-LCD-Remote-unsigned.ipa"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BLE-LCD-Remote-ipa
+          path: BLE-LCD-Remote-unsigned.ipa
