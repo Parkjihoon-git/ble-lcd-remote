@@ -216,16 +216,19 @@ class MainActivity : AppCompatActivity() {
             enableBtLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
             return
         }
-        // 마지막으로 연결한 장치가 있으면 선택 창 없이 바로 연결 (검색이 필요 없어서 위치도 필요 없음)
-        if (!forcePicker && ble.connectSaved()) return
-        forcePicker = false
         // Android 11 이하는 위치(GPS)가 꺼져 있으면 BLE 검색 결과가 나오지 않음
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-            if (!LocationManagerCompat.isLocationEnabled(lm)) {
-                ble.emitState("error", "", "Android 11 이하에서는 위치(GPS)를 켜야 장치를 찾을 수 있어요")
-                return
-            }
+        val locationOk = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ||
+            LocationManagerCompat.isLocationEnabled(getSystemService(Context.LOCATION_SERVICE) as LocationManager)
+
+        // 마지막으로 연결한 장치가 있으면 선택 창 없이 바로 연결
+        // (Android 8 이상은 검색 없이 바로, Android 7 이하는 저장된 장치만 짧게 검색해서 연결)
+        if (!forcePicker && ble.savedName.isNotEmpty() && (!ble.needsScanForSaved || locationOk)) {
+            if (ble.connectSaved()) return
+        }
+        forcePicker = false
+        if (!locationOk) {
+            ble.emitState("error", "", "위치(GPS)를 켜야 장치를 찾고 연결할 수 있어요 (Android 11 이하)")
+            return
         }
         ble.startScanAndPick()
     }

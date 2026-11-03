@@ -48,6 +48,7 @@ class BleManager(
         )
         private const val CHUNK = 20
         private const val SCAN_MS = 20_000L
+        private const val SAVED_SCAN_MS = 10_000L
         private const val CONNECT_TIMEOUT_MS = 12_000L
         private const val MAX_RECONNECT = 6
     }
@@ -90,9 +91,88 @@ class BleManager(
             forgetDevice()
             return false
         }
+        savedRetries = 0
+        if (needsScanForSaved) return startSavedScan(addr)
         val d = try { a.getRemoteDevice(addr) } catch (e: Exception) { return false }
         connectTo(d, fromSaved = true)
         return true
+    }
+
+    /**
+     * Android 7 이하(갤럭시 노트5 등)는 주소만으로 바로 연결하면 실패(오류 133)하는 경우가 많아서
+     * 저장된 장치를 먼저 검색으로 찾은 뒤 연결함. 이 방식은 위치(GPS)가 켜져 있어야 함.
+     */
+    val needsScanForSaved: Boolean get() = Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+
+    private var savedScanning = false
+    private var savedRetries = 0
+
+    private val savedScanCallback = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            main.post { onSavedScanResult(result) }
+        }
+
+        override fun onBatchScanResults(results: MutableList<ScanResult>) {
+            main.post { results.forEach { onSavedScanResult(it) } }
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            main.post {
+                stopSavedScan()
+                savedFailed("저장된 장치를 찾지 못했어요 (검색 오류 $errorCode)")
+            }
+        }
+    }
+
+    private val savedScanTimeout = Runnable {
+        if (savedScanning) {
+            stopSavedScan()
+            savedFailed("저장된 장치${if (savedName.isNotBlank()) "($savedName)" else ""}를 찾지 못했어요. 장치 전원을 확인하거나 장치를 선택하세요")
+        }
+    }
+
+    private fun startSavedScan(addr: String): Boolean {
+        val scanner = adapter?.bluetoothLeScanner ?: return false
+        stopScan()
+        stopSavedScan()
+        main.removeCallbacks(reconnectRunnable)
+        closeGatt()
+        device = null
+        manualDisconnect = false
+        emitState("connecting", savedName, "")
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build()
+        return try {
+            scanner.startScan(null, settings, savedScanCallback)
+            savedScanning = true
+            main.postDelayed(savedScanTimeout, SAVED_SCAN_MS)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun onSavedScanResult(r: ScanResult) {
+        if (!savedScanning || r.device.address != savedAddress) return
+        stopSavedScan()
+        connectTo(r.device, fromSaved = true)     // 검색으로 찾은 장치 객체로 연결
+    }
+
+    private fun stopSavedScan() {
+        main.removeCallbacks(savedScanTimeout)
+        if (savedScanning) {
+            try { adapter?.bluetoothLeScanner?.stopScan(savedScanCallback) } catch (e: Exception) { }
+            savedScanning = false
+        }
+    }
+
+    /** 저장된 장치에 연결 못 함 → 안내 후 장치 선택 창 */
+    private fun savedFailed(msg: String) {
+        tryingSaved = false
+        device = null
+        emitState("error", "", msg)
+        requestPicker?.invoke()
     }
 
     fun forgetDevice() {
@@ -160,6 +240,7 @@ class BleManager(
     }
 
     fun startScanAndPick() {
+        stopSavedScan()
         if (adapter?.bluetoothLeScanner == null) {
             emitState("error", "", "블루투스를 켜주세요")
             return
@@ -321,6 +402,7 @@ class BleManager(
     }
 
     fun disconnect() {
+        stopSavedScan()
         manualDisconnect = true
         main.removeCallbacks(reconnectRunnable)
         main.removeCallbacks(connectTimeout)
@@ -329,6 +411,7 @@ class BleManager(
     }
 
     fun close() {
+        stopSavedScan()
         manualDisconnect = true
         main.removeCallbacks(reconnectRunnable)
         main.removeCallbacks(connectTimeout)
@@ -355,11 +438,15 @@ class BleManager(
 
         // 저장된 장치로 바로 연결했는데 한 번도 연결되지 않음 → 장치 선택 창으로
         if (tryingSaved && !everConnected && !manualDisconnect) {
-            tryingSaved = false
+            // 구형 폰은 첫 연결이 오류(133)로 실패하는 일이 잦아서 한 번 더 시도
+            if (savedRetries < 2 && device != null) {
+                savedRetries++
+                emitState("connecting", deviceName(), "")
+                main.postDelayed({ if (tryingSaved && !manualDisconnect) openGatt() }, 800)
+                return
+            }
             val name = savedName
-            device = null
-            emitState("error", "", "저장된 장치${if (name.isNotBlank()) "($name)" else ""}에 연결하지 못했어요. 장치를 선택하세요")
-            requestPicker?.invoke()
+            savedFailed("저장된 장치${if (name.isNotBlank()) "($name)" else ""}에 연결하지 못했어요. 장치를 선택하세요")
             return
         }
 
