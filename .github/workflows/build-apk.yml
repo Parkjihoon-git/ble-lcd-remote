@@ -23,7 +23,8 @@ jobs:
         id: proj
         run: |
           # 프로젝트가 저장소 맨 위에 있든, 폴더 안에 있든 gradlew 위치를 찾음
-          GW=$(find . -name gradlew -not -path './.git/*' | head -1)
+          # 폴더가 겹쳐 올라간 경우에도 가장 바깥(얕은) 위치의 프로젝트를 사용
+          GW=$(find . -name gradlew -not -path './.git/*' | awk -F/ '{print NF" "$0}' | sort -n | head -1 | cut -d' ' -f2-)
           if [ -z "$GW" ]; then
             echo "::error::gradlew 파일이 없어요. 프로젝트 파일(app 폴더, gradle 폴더, gradlew 등)을 먼저 올려주세요."
             exit 1
@@ -32,6 +33,7 @@ jobs:
           chmod +x "$GW"
           echo "dir=$DIR" >> "$GITHUB_OUTPUT"
           echo "프로젝트 위치: $DIR"
+          grep -n "minSdk\|targetSdk" "$DIR/app/build.gradle.kts"
 
       # ---- 바로 설치해서 쓰는 APK (테스트용) ----
       - name: Build APK (install directly on phone)
