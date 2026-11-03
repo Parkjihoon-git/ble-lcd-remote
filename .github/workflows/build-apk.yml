@@ -35,8 +35,36 @@ jobs:
           echo "프로젝트 위치: $DIR"
           grep -n "minSdk\|targetSdk" "$DIR/app/build.gradle.kts"
 
-      # ---- 바로 설치해서 쓰는 APK (테스트용) ----
-      - name: Build APK (install directly on phone)
+      # ---- 서명 키 (GitHub Secrets) ----
+      - name: Restore upload key
+        id: key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::KEYSTORE_BASE64 Secret이 없어서 테스트용 임시 서명으로 APK를 만들어요. (빌드마다 서명이 달라 덮어 설치가 안 되고, AAB도 만들지 않아요)"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---- 휴대폰에 바로 설치하는 APK ----
+      # 항상 같은 업로드 키로 서명 → 새 버전을 기존 앱 위에 덮어 설치할 수 있음
+      - name: Build APK (signed with upload key)
+        if: steps.key.outputs.ok == 'true'
+        working-directory: ${{ steps.proj.outputs.dir }}
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/upload-keystore.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease --no-daemon --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/BLE-LCD-Remote.apk"
+
+      - name: Build APK (temporary debug signature)
+        if: steps.key.outputs.ok != 'true'
         working-directory: ${{ steps.proj.outputs.dir }}
         run: |
           ./gradlew assembleDebug --no-daemon --stacktrace
@@ -48,19 +76,6 @@ jobs:
           path: BLE-LCD-Remote.apk
 
       # ---- Google Play에 올리는 AAB (업로드 키로 서명) ----
-      - name: Restore upload key
-        id: key
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::warning::KEYSTORE_BASE64 Secret이 없어서 AAB는 만들지 않았어요. README의 'AAB 서명 키 등록'을 따라 Secrets를 등록하세요."
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Build AAB (Google Play)
         if: steps.key.outputs.ok == 'true'
         working-directory: ${{ steps.proj.outputs.dir }}
