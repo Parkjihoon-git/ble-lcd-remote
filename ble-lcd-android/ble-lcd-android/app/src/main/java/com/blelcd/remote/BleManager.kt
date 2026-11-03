@@ -14,6 +14,7 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.content.DialogInterface
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -46,7 +47,7 @@ class BleManager(
             UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e")
         )
         private const val CHUNK = 20
-        private const val SCAN_MS = 15_000L
+        private const val SCAN_MS = 20_000L
         private const val CONNECT_TIMEOUT_MS = 12_000L
         private const val MAX_RECONNECT = 6
     }
@@ -67,7 +68,13 @@ class BleManager(
 
     // =============== 마지막으로 연결한 장치 기억 ===============
     private val prefs = activity.getSharedPreferences("ble", Context.MODE_PRIVATE)
-    val savedName: String get() = prefs.getString("name", "") ?: ""
+    /** 저장된 장치 이름. 저장된 장치가 없으면 빈 문자열 (이름을 모르면 "BLE 장치") */
+    val savedName: String
+        get() {
+            if (prefs.getString("address", null) == null) return ""
+            return prefs.getString("name", null)?.takeIf { it.isNotBlank() } ?: "BLE 장치"
+        }
+    private var pendingName: String? = null   // 목록에서 고른 장치의 이름 (검색 신호에서 읽은 이름)
     private val savedAddress: String? get() = prefs.getString("address", null)
     private var tryingSaved = false       // 저장된 장치로 바로 연결 시도 중
     private var everConnected = false     // 이번 연결 시도에서 한 번이라도 연결됐는지
@@ -94,7 +101,11 @@ class BleManager(
     }
 
     private fun saveDevice(d: BluetoothDevice) {
-        val name = (try { d.name } catch (e: SecurityException) { null })?.takeIf { it.isNotBlank() } ?: savedName
+        val sameAsSaved = d.address == savedAddress
+        val name = (try { d.name } catch (e: SecurityException) { null })?.takeIf { it.isNotBlank() }
+            ?: pendingName?.takeIf { it.isNotBlank() }
+            ?: (if (sameAsSaved) prefs.getString("name", null)?.takeIf { it.isNotBlank() } else null)
+            ?: "BLE 장치"
         prefs.edit().putString("address", d.address).putString("name", name).apply()
         emitSaved()
     }
@@ -113,14 +124,17 @@ class BleManager(
         val n = try { device?.name } catch (e: SecurityException) { null }
         if (!n.isNullOrBlank()) return n
         // 바로 연결한 장치는 이름을 아직 모를 수 있어서 저장된 이름을 씀
-        return if (device != null && device?.address == savedAddress) savedName else ""
+        return if (device != null && device?.address == savedAddress) savedName else (pendingName ?: "")
     }
 
     // =============== 검색 + 장치 선택 창 ===============
     private var scanning = false
     private var dialog: AlertDialog? = null
     private var listAdapter: ArrayAdapter<String>? = null
-    private val found = LinkedHashMap<String, Pair<BluetoothDevice, String>>()   // 주소 -> (장치, 표시 글)
+
+    private class Found(val device: BluetoothDevice, var name: String?, var rssi: Int, val connected: Boolean)
+    private val found = LinkedHashMap<String, Found>()     // 주소 -> 장치
+    private var shown: List<Found> = emptyList()           // 화면 목록 순서 (누른 항목 찾기용)
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -146,33 +160,57 @@ class BleManager(
     }
 
     fun startScanAndPick() {
-        val scanner = adapter?.bluetoothLeScanner
-        if (scanner == null) {
+        if (adapter?.bluetoothLeScanner == null) {
             emitState("error", "", "블루투스를 켜주세요")
             return
         }
         stopScan()
         found.clear()
+        shown = emptyList()
         val list = ArrayAdapter(activity, android.R.layout.simple_list_item_1, ArrayList<String>())
         listAdapter = list
 
         dialog?.dismiss()
-        dialog = AlertDialog.Builder(activity)
+        val dlg = AlertDialog.Builder(activity)
             .setTitle("장치 찾는 중…")
             .setAdapter(list) { _, which ->
-                val entry = found.values.elementAtOrNull(which) ?: return@setAdapter
+                val entry = shown.getOrNull(which) ?: return@setAdapter
                 stopScan()
-                connectTo(entry.first, fromSaved = false)
+                pendingName = entry.name
+                connectTo(entry.device, fromSaved = false)
             }
             .setNegativeButton("취소") { _, _ ->
                 stopScan()
                 emitState("cancelled", "", "")
             }
+            .setNeutralButton("다시 찾기", null)
             .setOnCancelListener {
                 stopScan()
                 emitState("cancelled", "", "")
             }
-            .show()
+            .create()
+        // "다시 찾기"는 창을 닫지 않고 목록을 비운 뒤 다시 검색
+        dlg.setOnShowListener {
+            dlg.getButton(DialogInterface.BUTTON_NEUTRAL)?.setOnClickListener { restartScan() }
+        }
+        dialog = dlg
+        dlg.show()
+        restartScan()
+    }
+
+    private fun restartScan() {
+        val scanner = adapter?.bluetoothLeScanner ?: return
+        stopScan()
+        found.clear()
+        // 휴대폰이 이미 연결하고 있는 장치는 광고를 멈춰서 검색에 안 나옴 → 따로 목록에 넣음
+        try {
+            val bm = activity.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+            for (d in bm.getConnectedDevices(BluetoothProfile.GATT)) {
+                val n = try { d.name } catch (e: SecurityException) { null }
+                found[d.address] = Found(d, n, 0, connected = true)
+            }
+        } catch (e: Exception) { }
+        refreshList()
 
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
@@ -180,6 +218,7 @@ class BleManager(
         try {
             scanner.startScan(null, settings, scanCallback)
             scanning = true
+            dialog?.setTitle("장치 찾는 중…")
             emitState("scanning", "", "")
             main.postDelayed(scanTimeout, SCAN_MS)
         } catch (e: Exception) {
@@ -190,14 +229,41 @@ class BleManager(
 
     private fun addResult(r: ScanResult) {
         val d = r.device
-        val name = r.scanRecord?.deviceName ?: (try { d.name } catch (e: SecurityException) { null })
-        if (name.isNullOrBlank()) return            // 이름 없는 장치는 목록에서 뺌
-        found[d.address] = d to "$name\n${d.address}   ${r.rssi} dBm"
-        val list = listAdapter ?: return
-        list.clear()
-        list.addAll(found.values.map { it.second })
-        list.notifyDataSetChanged()
+        val name = r.scanRecord?.deviceName?.takeIf { it.isNotBlank() }
+            ?: (try { d.name } catch (e: SecurityException) { null })?.takeIf { it.isNotBlank() }
+        val f = found[d.address]
+        if (f == null) {
+            found[d.address] = Found(d, name, r.rssi, connected = false)
+        } else {
+            if (name != null) f.name = name           // 이름은 나중 패킷(스캔 응답)에 올 때가 많음
+            f.rssi = r.rssi
+        }
+        refreshList()
         if (scanning) dialog?.setTitle("장치 선택 (찾는 중…)")
+    }
+
+    /** 이미 연결됨 → 저장된 장치 → 이름 있는 장치(신호 센 순) → 이름 없는 장치 순으로 보여줌 */
+    private fun refreshList() {
+        val list = listAdapter ?: return
+        val saved = savedAddress
+        shown = found.values.sortedWith(
+            compareByDescending<Found> { it.connected }
+                .thenByDescending { it.device.address == saved }
+                .thenByDescending { it.name != null }
+                .thenByDescending { it.rssi }
+        )
+        list.clear()
+        list.addAll(shown.map { f ->
+            val title = f.name ?: "(이름 없음)"
+            val tag = when {
+                f.connected -> "   · 이미 연결됨"
+                f.device.address == saved -> "   · 저장된 장치"
+                else -> ""
+            }
+            val signal = if (f.connected) "" else "   ${f.rssi} dBm"
+            "$title$tag\n${f.device.address}$signal"
+        })
+        list.notifyDataSetChanged()
     }
 
     private fun stopScan() {

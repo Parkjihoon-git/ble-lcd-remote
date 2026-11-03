@@ -14,8 +14,15 @@ final class BleManager: NSObject {
         CBUUID(string: "FFE1"),
         CBUUID(string: "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"),
     ]
+    /// 이미 연결된 장치를 찾을 때 쓰는 서비스: HM-10/JDY(FFE0), Nordic UART, ESP32 예제, FFF0
+    private static let knownServices: [CBUUID] = [
+        CBUUID(string: "FFE0"),
+        CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"),
+        CBUUID(string: "4FAFC201-1FB5-459E-8FCC-C5C9C331914B"),
+        CBUUID(string: "FFF0"),
+    ]
     private static let chunkSize = 20
-    private static let scanSeconds: TimeInterval = 15
+    private static let scanSeconds: TimeInterval = 20
     private static let connectTimeout: TimeInterval = 12
 
     private let js: (String) -> Void
@@ -42,7 +49,13 @@ final class BleManager: NSObject {
     private let defaults = UserDefaults.standard
     private var wantChoose = false        // true: 저장된 장치가 있어도 선택 창
     private var tryingSaved = false
-    var savedName: String { defaults.string(forKey: "ble.savedName") ?? "" }
+    /// 저장된 장치 이름. 저장된 장치가 없으면 빈 문자열 (이름을 모르면 "BLE 장치")
+    var savedName: String {
+        guard savedId != nil else { return "" }
+        let n = defaults.string(forKey: "ble.savedName") ?? ""
+        return n.isEmpty ? "BLE 장치" : n
+    }
+    private var pendingName: String?          // 목록에서 고른 장치의 이름 (검색 신호에서 읽은 이름)
     private var savedId: UUID? { defaults.string(forKey: "ble.savedId").flatMap(UUID.init(uuidString:)) }
 
     /// 저장된 장치 이름이 바뀌면 알려줌 (화면에 넣는 연결 코드에 반영)
@@ -68,7 +81,9 @@ final class BleManager: NSObject {
 
     private func emitState(_ state: String, _ msg: String = "") {
         var name = peripheral?.name ?? ""
-        if name.isEmpty, let p = peripheral, p.identifier == savedId { name = savedName }
+        if name.isEmpty, let p = peripheral {
+            name = p.identifier == savedId ? savedName : (pendingName ?? "")
+        }
         js("window.__bleSetConnected && window.__bleSetConnected(\(isConnected));" +
            "window.bleOnState && window.bleOnState(\(quote(state)),\(quote(name)),\(quote(msg)))")
     }
@@ -117,13 +132,14 @@ final class BleManager: NSObject {
     }
 
     private func showPicker() {
-        guard let central = central, let presenter = presenter else { return }
+        guard central != nil, let presenter = presenter else { return }
         stopScan()
 
         let vc = ScanViewController()
-        vc.onSelect = { [weak self] p in
+        vc.onSelect = { [weak self] p, name in
             self?.stopScan()
             self?.scanVC = nil
+            self?.pendingName = name
             self?.connectTo(p, fromSaved: false)
         }
         vc.onCancel = { [weak self] in
@@ -131,13 +147,27 @@ final class BleManager: NSObject {
             self?.scanVC = nil
             self?.emitState("cancelled")
         }
+        vc.onRescan = { [weak self] in self?.startScan() }
+        vc.savedId = savedId
         scanVC = vc
         let nav = UINavigationController(rootViewController: vc)
         nav.presentationController?.delegate = vc
         presenter.present(nav, animated: true)
+        startScan()
+    }
 
+    /// 목록을 비우고 검색 (처음 / "다시 찾기")
+    private func startScan() {
+        guard let central = central, central.state == .poweredOn else { return }
+        stopScan()
+        scanVC?.reset()
+        // 휴대폰이 이미 연결하고 있는 장치는 광고를 멈춰서 검색에 안 나옴 → 따로 목록에 넣음
+        for p in central.retrieveConnectedPeripherals(withServices: Self.knownServices) {
+            scanVC?.update(p, name: p.name, rssi: 0, connected: true)
+        }
+        // 중복 허용: 이름(스캔 응답)이 나중에 오는 장치도 이름이 채워지도록
         central.scanForPeripherals(withServices: nil,
-                                   options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+                                   options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
         emitState("scanning")
         scanTimer = Timer.scheduledTimer(withTimeInterval: Self.scanSeconds, repeats: false) { [weak self] _ in
             self?.stopScan()
@@ -193,7 +223,13 @@ final class BleManager: NSObject {
     }
 
     private func saveDevice(_ p: CBPeripheral) {
-        let name = (p.name?.isEmpty == false) ? p.name! : savedName
+        let sameAsSaved = p.identifier == savedId
+        let stored = defaults.string(forKey: "ble.savedName") ?? ""
+        let name: String
+        if let n = p.name, !n.isEmpty { name = n }
+        else if let n = pendingName, !n.isEmpty { name = n }
+        else if sameAsSaved, !stored.isEmpty { name = stored }
+        else { name = "BLE 장치" }
         defaults.set(p.identifier.uuidString, forKey: "ble.savedId")
         defaults.set(name, forKey: "ble.savedName")
         emitSaved()
@@ -308,8 +344,9 @@ extension BleManager: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
         let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name
-        guard let n = name, !n.isEmpty else { return }   // 이름 없는 장치는 목록에서 뺌
-        scanVC?.update(peripheral, name: n, rssi: RSSI.intValue)
+        let rssi = RSSI.intValue
+        guard rssi != 127 else { return }               // 127 = 신호 세기 알 수 없음
+        scanVC?.update(peripheral, name: name, rssi: rssi)
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {

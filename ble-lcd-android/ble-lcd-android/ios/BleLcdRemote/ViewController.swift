@@ -43,7 +43,10 @@ final class ViewController: UIViewController, WKScriptMessageHandler {
 
     override func loadView() {
         let contents = WKUserContentController()
-        let savedName = UserDefaults.standard.string(forKey: "ble.savedName") ?? ""
+        // 저장된 장치가 있으면 이름(모르면 "BLE 장치"), 없으면 빈 문자열
+        let hasSaved = UserDefaults.standard.string(forKey: "ble.savedId") != nil
+        let storedName = UserDefaults.standard.string(forKey: "ble.savedName") ?? ""
+        let savedName = hasSaved ? (storedName.isEmpty ? "BLE 장치" : storedName) : ""
         contents.addUserScript(WKUserScript(source: Self.bridgeScript(savedName: savedName),
                                             injectionTime: .atDocumentStart,
                                             forMainFrameOnly: true))
