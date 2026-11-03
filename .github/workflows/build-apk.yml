@@ -11,6 +11,8 @@ jobs:
       VERSION_CODE: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # 어느 폴더가 가장 최근에 올라갔는지 알기 위해 기록 전체를 가져옴
 
       - uses: actions/setup-java@v4
         with:
@@ -22,9 +24,14 @@ jobs:
       - name: Find project folder
         id: proj
         run: |
-          # 프로젝트가 저장소 맨 위에 있든, 폴더 안에 있든 gradlew 위치를 찾음
-          # 폴더가 겹쳐 올라간 경우에도 가장 바깥(얕은) 위치의 프로젝트를 사용
-          GW=$(find . -name gradlew -not -path './.git/*' | awk -F/ '{print NF" "$0}' | sort -n | head -1 | cut -d' ' -f2-)
+          # 프로젝트(gradlew)가 여러 군데 있으면 app 폴더가 "가장 최근에 올라간" 쪽을 빌드
+          GW=""; BEST=0
+          for g in $(find . -name gradlew -not -path './.git/*'); do
+            d="$(dirname "$g")"
+            t=$(git log -1 --format=%ct -- "$d/app" 2>/dev/null); t=${t:-0}
+            echo "후보: $d (마지막 업로드 $(date -d @$t '+%m-%d %H:%M' 2>/dev/null))"
+            if [ "$t" -gt "$BEST" ]; then BEST=$t; GW="$g"; fi
+          done
           if [ -z "$GW" ]; then
             echo "::error::gradlew 파일이 없어요. 프로젝트 파일(app 폴더, gradle 폴더, gradlew 등)을 먼저 올려주세요."
             exit 1
