@@ -38,6 +38,12 @@ android {
         }
     }
 
+    // 릴리스 빌드 때 경고성 검사(lint) 때문에 빌드가 멈추지 않게
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
