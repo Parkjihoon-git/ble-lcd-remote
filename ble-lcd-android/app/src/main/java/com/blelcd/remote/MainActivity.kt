@@ -212,7 +212,11 @@ class MainActivity : AppCompatActivity() {
             getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         }
         if (vibrator != null && vibrator.hasVibrator()) {
-            vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                vibrator.vibrate(ms)   // Android 7 이하
+            }
         }
     }
 

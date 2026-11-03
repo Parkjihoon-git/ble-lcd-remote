@@ -4,7 +4,7 @@
 
 - 화면: `app/src/main/assets/index.html` (휴대폰용 HTML 그대로)
 - 블루투스: `BleManager.kt` (안드로이드 기본 BLE — 앱 WebView는 웹 블루투스를 지원하지 않아서 네이티브로 처리)
-- 지원: Android 8.0 이상 · 대상 API 36 (Google Play 2026-08-31 요구사항)
+- 지원: Android 5.0 이상 (갤럭시 노트5 포함) · 대상 API 36 (Google Play 2026-08-31 요구사항)
 
 ## APK 만드는 방법
 

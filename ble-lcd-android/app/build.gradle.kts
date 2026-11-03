@@ -13,7 +13,7 @@ android {
 
     defaultConfig {
         applicationId = "com.blelcd.remote"
-        minSdk = 26          // Android 8.0 이상
+        minSdk = 21          // Android 5.0 이상 (갤럭시 노트5 등 구형 기기 포함)
         targetSdk = 36       // Google Play 요구사항 (2026-08-31부터 API 36)
         // 빌드할 때마다 자동으로 올라감 (Play에 올릴 때마다 versionCode가 커야 함)
         versionCode = (System.getenv("VERSION_CODE") ?: "1").toInt()

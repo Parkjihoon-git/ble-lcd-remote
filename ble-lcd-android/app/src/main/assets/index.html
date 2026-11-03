@@ -94,7 +94,7 @@ header{display:flex;align-items:center;gap:10px}
 .toast.err{background:#7f1d1d}
 
 /* 설정 시트 */
-.scrim{position:fixed;inset:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity .2s;z-index:20}
+.scrim{position:fixed;top:0;right:0;bottom:0;left:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity .2s;z-index:20}
 .scrim.open{opacity:1;pointer-events:auto}
 .sheet{position:fixed;left:0;right:0;bottom:0;max-width:480px;margin:0 auto;max-height:85vh;overflow:auto;
   background:var(--sheet);border-radius:20px 20px 0 0;padding:8px 20px calc(env(safe-area-inset-bottom) + 20px);
@@ -111,7 +111,7 @@ header{display:flex;align-items:center;gap:10px}
 .field input[type=text].wide{width:100%;text-align:left}
 .switch{position:relative;width:46px;height:28px;flex:0 0 46px}
 .switch input{opacity:0;width:0;height:0}
-.switch span{position:absolute;inset:0;border-radius:999px;background:var(--line);transition:background .2s}
+.switch span{position:absolute;top:0;right:0;bottom:0;left:0;border-radius:999px;background:var(--line);transition:background .2s}
 .switch span::after{content:"";position:absolute;left:3px;top:3px;width:22px;height:22px;border-radius:50%;background:#fff;
   transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
 .switch input:checked + span{background:var(--accent)}
